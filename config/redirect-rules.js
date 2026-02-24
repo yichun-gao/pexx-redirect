@@ -1,28 +1,23 @@
-// 重定向规则配置
+
+// 重定向规则配置（现在是代理规则）
+const motionPayBaseUrl = process.env.MOTION_PAY_BASE_URL;
+
 const redirectRules = {
-    // GET请求重定向规则
+    // GET请求代理规则
     GET: [
         {
-            pattern: '/old-page',
-            target: 'https://new-domain.com/new-page',
-            statusCode: 301
-        },
-        {
-            pattern: '/api/v1/*',
-            target: 'https://api.new-domain.com/v2/$1',
-            statusCode: 308
+            pattern: '/motionpay/*',
+            target: `${motionPayBaseUrl}/$1`
         }
     ],
 
-    // POST请求重定向规则
+    // POST请求代理规则
     POST: [
         {
-            pattern: '/submit-form',
-            target: 'https://forms.new-domain.com/process',
-            statusCode: 307,
-            preserveBody: true
+            pattern: '/motionpay/*',
+            target: `${motionPayBaseUrl}/$1`
         }
-    ]
+    ],
 };
 
 module.exports = redirectRules;

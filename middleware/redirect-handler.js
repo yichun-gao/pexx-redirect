@@ -13,17 +13,10 @@ function redirectHandler(req, res, next) {
         if (matchesPattern(url, rule.pattern)) {
             const targetUrl = buildTargetUrl(url, rule.pattern, rule.target);
 
-            logger.info(`Redirecting ${method} ${url} to ${targetUrl} with status ${rule.statusCode}`);
+            logger.info(`Proxying ${method} ${url} to ${targetUrl}`);
 
-            // 处理POST请求的数据转发
-            if (method === 'POST' && rule.preserveBody) {
-                // 对于需要保留body的POST请求，使用代理方式
-                proxyPostRequest(req, res, targetUrl, rule.statusCode);
-            } else {
-                // 普通重定向
-                res.redirect(rule.statusCode, targetUrl);
-            }
-
+            // 统一使用代理方式，返回200状态码
+            proxyRequest(req, res, targetUrl);
             return;
         }
     }
@@ -35,7 +28,6 @@ function redirectHandler(req, res, next) {
 // 检查URL是否匹配模式
 function matchesPattern(url, pattern) {
     if (pattern.includes('*')) {
-        // 处理通配符模式
         const regexPattern = pattern.replace(/\*/g, '(.*)');
         const regex = new RegExp(`^${regexPattern}$`);
         return regex.test(url);
@@ -55,8 +47,8 @@ function buildTargetUrl(sourceUrl, pattern, target) {
     return target;
 }
 
-// 代理POST请求
-function proxyPostRequest(req, res, targetUrl, statusCode) {
+// 统一代理函数（支持所有HTTP方法）
+function proxyRequest(req, res, targetUrl) {
     const https = require('https');
     const http = require('http');
     const url = require('url');
@@ -69,7 +61,7 @@ function proxyPostRequest(req, res, targetUrl, statusCode) {
         hostname: target.hostname,
         port: target.port || (isHttps ? 443 : 80),
         path: target.path,
-        method: 'POST',
+        method: req.method,
         headers: {
             ...req.headers,
             host: target.host
@@ -77,17 +69,22 @@ function proxyPostRequest(req, res, targetUrl, statusCode) {
     };
 
     const proxyReq = client.request(options, (proxyRes) => {
-        res.writeHead(proxyRes.statusCode, proxyRes.headers);
+        // 直接返回200状态码，将目标服务器响应透传给客户端
+        res.writeHead(200, proxyRes.headers);
         proxyRes.pipe(res);
     });
 
     proxyReq.on('error', (err) => {
         logger.error('Proxy error:', err);
-        res.status(500).json({ error: 'Proxy Error' });
+        res.status(500).json({ error: 'Proxy Error', message: err.message });
     });
 
-    // 转发请求体
-    req.pipe(proxyReq);
+    // 转发请求体（如果有）
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+        req.pipe(proxyReq);
+    } else {
+        proxyReq.end();
+    }
 }
 
 module.exports = redirectHandler;
