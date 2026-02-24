@@ -1,23 +1,23 @@
+// 不在模块顶层直接读取环境变量
+function getRedirectRules() {
+    const motionPayBaseUrl = process.env.MOTION_PAY_BASE_URL;
 
-// 重定向规则配置（现在是代理规则）
-const motionPayBaseUrl = process.env.MOTION_PAY_BASE_URL;
+    console.log('MotionPay Base URL:', motionPayBaseUrl);
 
-const redirectRules = {
-    // GET请求代理规则
-    GET: [
-        {
-            pattern: '/motionpay/*',
-            target: `${motionPayBaseUrl}/$1`
-        }
-    ],
+    return {
+        GET: [
+            {
+                pattern: '/motionpay/*',
+                target: `${motionPayBaseUrl}/$1`
+            }
+        ],
+        POST: [
+            {
+                pattern: '/motionpay/*',
+                target: `${motionPayBaseUrl}/$1`
+            }
+        ]
+    };
+}
 
-    // POST请求代理规则
-    POST: [
-        {
-            pattern: '/motionpay/*',
-            target: `${motionPayBaseUrl}/$1`
-        }
-    ],
-};
-
-module.exports = redirectRules;
+module.exports = getRedirectRules;

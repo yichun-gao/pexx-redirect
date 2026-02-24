@@ -1,4 +1,4 @@
-const redirectRules = require('../config/redirect-rules');
+const getRedirectRules = require('../config/redirect-rules');
 const logger = require('../utils/logger');
 
 function redirectHandler(req, res, next) {
@@ -6,7 +6,7 @@ function redirectHandler(req, res, next) {
     const url = req.url;
 
     // 获取对应HTTP方法的重定向规则
-    const rules = redirectRules[method] || [];
+    const rules = getRedirectRules()[method] || [];
 
     // 查找匹配的规则
     for (const rule of rules) {
@@ -53,38 +53,81 @@ function proxyRequest(req, res, targetUrl) {
     const http = require('http');
     const url = require('url');
 
-    const target = url.parse(targetUrl);
-    const isHttps = target.protocol === 'https:';
-    const client = isHttps ? https : http;
+    const target = url.parse(targetUrl);  // 解析目标URL
+    const isHttps = target.protocol === 'https:';  // 判断是否HTTPS
+    const client = isHttps ? https : http;  // 选择合适的HTTP客户端
+
+    console.log(`Proxying ${req.method} ${req.url} to ${targetUrl}`);
+
+    // 修复：清理无关请求头，避免冲突
+    const headers = { ...req.headers };
+    delete headers.host; // 移除原始host，改用target.host
+    delete headers['content-length']; // 手动管理content-length，避免不匹配
+    headers.host = target.host;
 
     const options = {
-        hostname: target.hostname,
-        port: target.port || (isHttps ? 443 : 80),
-        path: target.path,
-        method: req.method,
-        headers: {
-            ...req.headers,
-            host: target.host
-        }
+        hostname: target.hostname,     // 目标主机名
+        port: target.port || (isHttps ? 443 : 80),  // 端口
+        path: target.path,             // 请求路径
+        method: req.method,            // HTTP方法保持不变
+        headers: headers
     };
 
+
     const proxyReq = client.request(options, (proxyRes) => {
-        // 直接返回200状态码，将目标服务器响应透传给客户端
-        res.writeHead(200, proxyRes.headers);
-        proxyRes.pipe(res);
+        console.log(`Target response: ${proxyRes.statusCode}`);
+        // 将目标服务器响应直接透传给客户端
+        res.writeHead(proxyRes.statusCode, proxyRes.headers);  // 保留响应头
+        proxyRes.pipe(res);  // 流式传输响应体
     });
+
 
     proxyReq.on('error', (err) => {
-        logger.error('Proxy error:', err);
-        res.status(500).json({ error: 'Proxy Error', message: err.message });
+        console.error('Proxy error:', err);
+        if (!res.headersSent) {  // 确保只发送一次响应
+            res.status(502).json({ error: 'Bad Gateway', message: err.message });
+        }
     });
 
-    // 转发请求体（如果有）
+    // 核心修复：统一处理请求体传输
     if (req.method !== 'GET' && req.method !== 'HEAD') {
-        req.pipe(proxyReq);
-    } else {
+        // 场景1：req.body已被解析（如body-parser处理过）
+        if (req.body && Object.keys(req.body).length > 0) {
+            console.log('Using parsed req.body...');
+            const bodyBuffer = Buffer.isBuffer(req.body)
+                ? req.body
+                : (typeof req.body === 'string'
+                    ? Buffer.from(req.body)
+                    : Buffer.from(JSON.stringify(req.body)));
+
+            // 修复：手动设置正确的content-length
+            proxyReq.setHeader('Content-Length', bodyBuffer.length);
+            // 写入并结束流（一次性写入完整body）
+            proxyReq.write(bodyBuffer);
+            proxyReq.end(); // 写入完成后显式结束
+        }
+        // 场景2：req.body未解析，使用原始流（未被消费）
+        else {
+            console.log('Piping raw request stream...');
+            // 修复：pipe自动管理流，无需手动end（pipe会在req结束时自动调用proxyReq.end()）
+            req.pipe(proxyReq);
+
+            // 监听req流错误，避免卡死
+            req.on('error', (err) => {
+                console.error('Request stream error:', err);
+                if (!proxyReq.finished) {
+                    proxyReq.destroy(err); // 销毁proxyReq，避免挂起
+                }
+            });
+        }
+    }
+    // GET/HEAD请求：无请求体，直接结束proxyReq
+    else {
+        console.log('No request body (GET/HEAD), ending proxy request');
         proxyReq.end();
     }
 }
+
+
 
 module.exports = redirectHandler;
